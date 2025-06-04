@@ -1,7 +1,7 @@
 const dgram = require('dgram');
 const fs = require('fs');
 const path = require('path');
-// const iconv = require('iconv-lite');
+const ddp = require('./ddp');
 
 // 创建日志目录
 const logDir = path.join(__dirname, 'logs');
@@ -36,29 +36,7 @@ function writeLog(message) {
     const logMessage = `[${timeStr}] ${message}\r\n`;
     fs.appendFileSync(logFile, logMessage, { encoding: 'utf8' });
 
-    // // 确保消息是字符串类型
-    // const strMessage = String(message);
 
-    // // 将日志信息转换为 GBK 编码
-    // const logMessage = `[${timeStr}] ${strMessage}\r\n`;
-    // const buffer = iconv.encode(logMessage, 'gbk');
-
-    // // 以二进制方式写入文件
-    // fs.appendFileSync(logFile, buffer);
-
-    // // 创建带有 BOM 的 UTF-8 文件头（仅在文件不存在时添加）
-    // if (!fs.existsSync(logFile)) {
-    //     fs.writeFileSync(logFile, '\ufeff', { encoding: 'utf8' });
-    // }
-
-    // 将日志信息转换为 Buffer 并写入文件
-    // const logMessage = `[${timeStr}] ${strMessage}\n`;
-    // fs.appendFileSync(logFile, logMessage, { encoding: 'utf8' });
-
-
-    // const logMessage = `[${timeStr}] ${message}\n`;
-    // const buffer = iconv.encode(logMessage, 'utf8');
-    // fs.appendFileSync(logFile, buffer);
 }
 
 const server = dgram.createSocket('udp4');
@@ -87,17 +65,40 @@ server.on('message', (msg, rinfo) => {
     writeLog(receiveMessage);
 
     try {
-        // 将接收到的数据转换为 UTF-8 字符串
-        const data = Buffer.from(msg).toString('utf8');
+        const result = ddp.parsePacket(msg);
+        
+        switch (result.type) {
+            case 'register':
+                // Handle registration
+                const registerMsg = `Device Registration: DTU=${result.dtuNumber}, IP=${result.ipAddress}, Port=${result.port}`;
+                console.log(registerMsg);
+                writeLog(registerMsg);
+                
+                // Send registration success response
+                server.send(result.response, rinfo.port, rinfo.address);
+                break;
 
-        if (data.startsWith('TYPE1')) {
-            handleType1Data(data);
-        } else if (data.startsWith('TYPE2')) {
-            handleType2Data(data);
-        } else {
-            const unknownMessage = `Receive Data数据: ${data}`;
-            console.log(unknownMessage);
-            writeLog(unknownMessage);
+            case 'unregister':
+                // Handle unregistration
+                const unregisterMsg = `Device Unregistration: DTU=${result.dtuNumber}`;
+                console.log(unregisterMsg);
+                writeLog(unregisterMsg);
+                
+                // Send unregistration success response
+                server.send(result.response, rinfo.port, rinfo.address);
+                break;
+
+            case 'data':
+                // Handle data
+                const dataMsg = `Received Data: DTU=${result.dtuNumber}, Data=${result.data.toString('hex')}`;
+                console.log(dataMsg);
+                writeLog(dataMsg);
+                break;
+
+            default:
+                const unknownMsg = `Unknown Data Type: ${result.type}`;
+                console.log(unknownMsg);
+                writeLog(unknownMsg);
         }
     } catch (error) {
         const errorMessage = `处理数据时发生错误: ${error.message}`;
@@ -110,9 +111,9 @@ server.on('message', (msg, rinfo) => {
 server.on('error', (err) => {
     let errorMessage = '';
     if (err.message && err.message.includes('iconv')) {
-        errorMessage = 'UDP服务器错误: 请先安装iconv-lite模块 (npm install iconv-lite)';
+        errorMessage = 'UDP Server Error: Please install iconv-lite module (npm install iconv-lite)';
     } else {
-        errorMessage = `UDP服务器错误: ${err.message}`;
+        errorMessage = `UDP Server Error: ${err.message}`;
     }
     console.error(errorMessage);
     writeLog(`[ERROR] ${errorMessage}`);
@@ -121,13 +122,13 @@ server.on('error', (err) => {
 
 // 数据处理函数
 function handleType1Data(data) {
-    const message = `处理类型1数据: ${data}`;
+    const message = `Process Type1 Data: ${data}`;
     console.log(message);
     writeLog(message);
 }
 
 function handleType2Data(data) {
-    const message = `处理类型2数据: ${data}`;
+    const message = `Process Type2 Data: ${data}`;
     console.log(message);
     writeLog(message);
 }
