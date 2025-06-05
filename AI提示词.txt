@@ -1,0 +1,3 @@
+本项目中有一个sqlite数据库，名字为monitor.db，在monitor.db中有一个RcvData的表，表中有4个字段，第1个字段id是一个自增的唯一字段，第2个字段DtuNo是一个文本字段，第3个字段RcvTime是一个文本字段，第4个字段Rcvdata是一个文本字段。在本Demo.js文件中实现将监听端口接收到的数据包原始数据保存到这个Sqlite数据库的RcvData表中，实现增删改查的功能。其中查询到的数据库中的数据变为json格式，便于后期给前端使用。
+
+在本Demo.js文件中实现开放一个web api接口，便于前端项目的调用
