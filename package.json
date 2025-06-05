@@ -3,6 +3,12 @@
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
+    "ffi-napi": "^4.0.3",
+    "iconv-lite": "^0.6.3",
+    "mongodb": "^6.16.0",
+    "ref-array-napi": "^1.2.2",
+    "ref-napi": "^3.0.3",
+    "ref-struct-napi": "^1.1.1",
     "sqlite3": "^5.1.7"
   }
 }
