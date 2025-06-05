@@ -410,10 +410,124 @@ app.delete('/api/data/:id', async (req, res) => {
     }
 });
 
+// 添加继电器控制 API
+app.post('/api/control/relay', async (req, res) => {
+    try {
+        const { dtuNo, command } = req.body;
+        
+        // 验证必要参数
+        if (!dtuNo || !command) {
+            res.status(400).json({
+                success: false,
+                error: 'DTU number and command are required'
+            });
+            return;
+        }
+
+        // 验证命令
+        if (command !== 'ON' && command !== 'OFF') {
+            res.status(400).json({
+                success: false,
+                error: 'Invalid command. Must be ON or OFF'
+            });
+            return;
+        }
+
+        // 获取设备信息（假设已在 ddp.js 中维护了设备连接信息）
+        const deviceInfo = ddp.registeredDevices.get(dtuNo);
+        if (!deviceInfo) {
+            res.status(404).json({
+                success: false,
+                error: 'DTU device not found or not registered'
+            });
+            return;
+        }
+
+        // 构建 MODBUS 命令
+        const value = command === 'ON' ? 0x0001 : 0x0000;
+        const modbusCommand = buildModbusCommand(0x02, value); // 设备地址固定为 0x02
+
+        // 发送命令
+        await sendCommandToDTU(dtuNo, modbusCommand, {
+            address: deviceInfo.ipAddress,
+            port: deviceInfo.port
+        });
+
+        // 记录操作
+        const logMessage = `Relay control command sent: DTU=${dtuNo}, Command=${command}`;
+        console.log(logMessage);
+        writeLog(logMessage);
+
+        res.json({
+            success: true,
+            message: `Relay ${command} command sent successfully`,
+            dtuNo: dtuNo
+        });
+
+    } catch (error) {
+        const errorMessage = `Failed to send relay control command: ${error.message}`;
+        console.error(errorMessage);
+        writeLog(`[ERROR] ${errorMessage}`);
+        
+        res.status(500).json({
+            success: false,
+            error: errorMessage
+        });
+    }
+});
+
 // 启动 Express 服务器
 app.listen(API_PORT, () => {
     console.log(`API Server running on port ${API_PORT}`);
 });
+
+// 添加 MODBUS CRC 校验计算函数
+function calculateModbusCRC(buffer) {
+    let crc = 0xFFFF;
+    for (let pos = 0; pos < buffer.length; pos++) {
+        crc ^= buffer[pos];
+        for (let i = 8; i !== 0; i--) {
+            if ((crc & 0x0001) !== 0) {
+                crc >>= 1;
+                crc ^= 0xA001;
+            } else {
+                crc >>= 1;
+            }
+        }
+    }
+    // 返回两个字节的 CRC
+    return Buffer.from([crc & 0xFF, (crc >> 8) & 0xFF]);
+}
+
+// 构建 MODBUS 写指令
+function buildModbusCommand(deviceAddress, value) {
+    // 构建基本命令（不含 CRC）
+    const command = Buffer.from([
+        deviceAddress,  // 设备地址
+        0x06,          // 功能码
+        0x02, 0xC5,    // 写入地址
+        (value >> 8) & 0xFF, value & 0xFF  // 写入值（高字节在前）
+    ]);
+    
+    // 计算 CRC
+    const crc = calculateModbusCRC(command);
+    
+    // 合并命令和 CRC
+    return Buffer.concat([command, crc]);
+}
+
+// 发送 MODBUS 命令到 DTU 设备
+function sendCommandToDTU(dtuNo, command, rinfo) {
+    return new Promise((resolve, reject) => {
+        server.send(command, rinfo.port, rinfo.address, (err) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            resolve();
+        });
+    });
+}
 
 // 示例：如何使用数据库操作函数
 async function exampleDatabaseOperations() {
