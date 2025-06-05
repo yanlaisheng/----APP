@@ -6,7 +6,12 @@ const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+<<<<<<< HEAD
 //--
+=======
+
+//?test33
+>>>>>>> 5e54a26856a0bfbc2cc3ddf2465a899e5e2fa0ea
 // 创建数据库连接
 const db = new sqlite3.Database('monitor.db', (err) => {
     if (err) {
