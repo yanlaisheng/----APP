@@ -1,0 +1,28 @@
+2025-06-05 11:16:40
+
+//监控参数 2025.5.8
+#define	w_JKUabRms			w_ParLst[700]	//Ab线电压有效值  .1(小数位)
+#define	w_JKUbcRms			w_ParLst[701]	//Bc线电压有效值  .1
+#define	w_JKUcaRms			w_ParLst[702]	//Ca线电压有效值  .1
+
+#define	w_JKIaRms			w_ParLst[703]	//A相电流有效值  .2
+#define	w_JKIbRms			w_ParLst[704]	//B相电流有效值  .2
+#define	w_JKIcRms			w_ParLst[705]	//C相电流有效值  .2
+
+#define	w_JKEptL			w_ParLst[706]	//合相有功电能（可配置读后清零） .2
+#define	w_JKEptH			w_ParLst[707]	//合相有功电能（可配置读后清零）
+
+#define	w_JKInPDec1			w_ParLst[708]	//.3  Mpa  进水口1压力
+
+#define	w_TouchRunStop		w_ParLst[709]	 // .0  继电器控制 =1 闭合继电器； =0 断开继电器
+
+#define	w_JDQStatus			w_ParLst[710]	 // .0  继电器状态 =1 继电器闭合； =0 继电器断开  ZCL 2025.6.5 
+
+//查询11个字
+020302BC000B
+
+//闭合继电器
+020602C50001
+
+//断开继电器
+020602C50000

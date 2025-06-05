@@ -2,6 +2,135 @@ const dgram = require('dgram');
 const fs = require('fs');
 const path = require('path');
 const ddp = require('./ddp');
+const sqlite3 = require('sqlite3').verbose();
+const express = require('express');
+const cors = require('cors');
+const bodyParser = require('body-parser');
+
+// 创建数据库连接
+const db = new sqlite3.Database('monitor.db', (err) => {
+    if (err) {
+        console.error('Database connection failed:', err.message);
+        return;
+    }
+    console.log('Connected to monitor.db database');
+});
+
+// 在文件顶部添加一个格式化时间的辅助函数
+function getBeijingTime() {
+    const date = new Date();
+    // 设置为北京时间
+    date.setHours(date.getHours() + 8);
+    return date.toISOString().replace('Z', '+08:00');
+}
+
+// 数据库操作函数
+const dbOperations = {
+    // 插入数据
+    insertData: (dtuNo, data) => {
+        return new Promise((resolve, reject) => {
+            if (!dtuNo || !data) {
+                reject(new Error('DTU number and data are required'));
+                return;
+            }
+            // 使用北京时间
+            const rcvTime = getBeijingTime();
+            const sql = `INSERT INTO RcvData (DtuNo, RcvTime, Rcvdata) VALUES (?, ?, ?)`;
+            db.run(sql, [dtuNo, rcvTime, data], function(err) {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(this.lastID);
+            });
+        });
+    },
+
+    // 查询数据
+    queryData: (conditions = {}) => {
+        return new Promise((resolve, reject) => {
+            let sql = 'SELECT * FROM RcvData';
+            const params = [];
+            
+            // 构建查询条件
+            if (Object.keys(conditions).length > 0) {
+                const whereClauses = [];
+                if (conditions.dtuNo) {
+                    whereClauses.push('DtuNo = ?');
+                    params.push(conditions.dtuNo);
+                }
+                if (conditions.startTime) {
+                    whereClauses.push('RcvTime >= ?');
+                    params.push(conditions.startTime);
+                }
+                if (conditions.endTime) {
+                    whereClauses.push('RcvTime <= ?');
+                    params.push(conditions.endTime);
+                }
+                if (whereClauses.length > 0) {
+                    sql += ' WHERE ' + whereClauses.join(' AND ');
+                }
+            }
+            
+            sql += ' ORDER BY RcvTime DESC';
+
+            db.all(sql, params, (err, rows) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                // 转换查询结果中的时间
+                const formattedRows = rows.map(row => {
+                    const date = new Date(row.RcvTime);
+                    date.setHours(date.getHours() + 8);
+                    return {
+                        ...row,
+                        RcvTime: date.toISOString().replace('Z', '+08:00')
+                    };
+                });
+                resolve(formattedRows);
+            });
+        });
+    },
+
+    // 删除数据
+    deleteData: (conditions) => {
+        return new Promise((resolve, reject) => {
+            let sql = 'DELETE FROM RcvData';
+            const params = [];
+
+            if (conditions.id) {
+                sql += ' WHERE id = ?';
+                params.push(conditions.id);
+            } else if (conditions.dtuNo) {
+                sql += ' WHERE DtuNo = ?';
+                params.push(conditions.dtuNo);
+            }
+
+            db.run(sql, params, function(err) {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(this.changes);
+            });
+        });
+    },
+
+    // 更新数据
+    updateData: (id, newData) => {
+        return new Promise((resolve, reject) => {
+            const sql = `UPDATE RcvData SET Rcvdata = ? WHERE id = ?`;
+            db.run(sql, [newData, id], function(err) {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(this.changes);
+            });
+        });
+    }
+};
 
 // 创建日志目录
 const logDir = path.join(__dirname, 'logs');
@@ -59,7 +188,7 @@ server.on('listening', () => {
 });
 
 // 当接收到消息时触发
-server.on('message', (msg, rinfo) => {
+server.on('message', async (msg, rinfo) => {
     const receiveMessage = `Receive Message from ${rinfo.address}:${rinfo.port}`;
     console.log(receiveMessage);
     writeLog(receiveMessage);
@@ -89,10 +218,21 @@ server.on('message', (msg, rinfo) => {
                 break;
 
             case 'data':
-                // Handle data
+                // Handle data and save to database
                 const dataMsg = `Received Data: DTU=${result.dtuNumber}, Data=${result.data.toString('hex')}`;
                 console.log(dataMsg);
                 writeLog(dataMsg);
+                
+                try {
+                    await dbOperations.insertData(
+                        result.dtuNumber,
+                        result.data.toString('hex')
+                    );
+                    console.log('Data saved to database successfully');
+                } catch (dbError) {
+                    console.error('Failed to save data:', dbError);
+                    writeLog(`[ERROR] Failed to save data: ${dbError.message}`);
+                }
                 break;
 
             default:
@@ -101,7 +241,7 @@ server.on('message', (msg, rinfo) => {
                 writeLog(unknownMsg);
         }
     } catch (error) {
-        const errorMessage = `处理数据时发生错误: ${error.message}`;
+        const errorMessage = `Error on resolve received data: ${error.message}`;
         console.error(errorMessage);
         writeLog(`[ERROR] ${errorMessage}`);
     }
@@ -120,18 +260,181 @@ server.on('error', (err) => {
     server.close();
 });
 
-// 数据处理函数
-function handleType1Data(data) {
-    const message = `Process Type1 Data: ${data}`;
-    console.log(message);
-    writeLog(message);
-}
-
-function handleType2Data(data) {
-    const message = `Process Type2 Data: ${data}`;
-    console.log(message);
-    writeLog(message);
-}
 
 // 绑定端口并开始监听
 server.bind(PORT);
+
+// 在程序退出时关闭数据库连接
+process.on('SIGINT', () => {
+    db.close((err) => {
+        if (err) {
+            console.error('Error closing database:', err.message);
+        }
+        console.log('Database connection closed');
+        process.exit(0);
+    });
+});
+
+// 创建Express应用
+const app = express();
+const API_PORT = 3000;
+
+// 使用中间件
+app.use(cors());
+app.use(bodyParser.json());
+
+// API路由
+// 1. 查询数据
+app.get('/api/data', async (req, res) => {
+    try {
+        const conditions = {
+            dtuNo: req.query.dtuNo,
+            startTime: req.query.startTime,
+            endTime: req.query.endTime
+        };
+        const data = await dbOperations.queryData(conditions);
+        res.json({
+            success: true,
+            data: data
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 2. 获取单条数据
+app.get('/api/data/:id', async (req, res) => {
+    try {
+        const data = await dbOperations.queryData({ id: req.params.id });
+        if (data.length === 0) {
+            res.status(404).json({
+                success: false,
+                error: 'Record not found'
+            });
+            return;
+        }
+        res.json({
+            success: true,
+            data: data[0]
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 3. 插入数据
+app.post('/api/data', async (req, res) => {
+    try {
+        const { dtuNo, data } = req.body;
+        
+        // 验证必要参数
+        if (!dtuNo || !data) {
+            res.status(400).json({
+                success: false,
+                error: 'DTU number and data are required'
+            });
+            return;
+        }
+
+        // 记录接收到的数据
+        console.log('Received POST request:', {
+            dtuNo: dtuNo,
+            data: data
+        });
+
+        const id = await dbOperations.insertData(dtuNo, data);
+        res.json({
+            success: true,
+            id: id,
+            message: 'Data inserted successfully'
+        });
+    } catch (error) {
+        console.error('Insert data error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 4. 更新数据
+app.put('/api/data/:id', async (req, res) => {
+    try {
+        const { data } = req.body;
+        const result = await dbOperations.updateData(req.params.id, data);
+        if (result === 0) {
+            res.status(404).json({
+                success: false,
+                error: 'Record not found'
+            });
+            return;
+        }
+        res.json({
+            success: true,
+            changes: result
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 5. 删除数据
+app.delete('/api/data/:id', async (req, res) => {
+    try {
+        const result = await dbOperations.deleteData({ id: req.params.id });
+        if (result === 0) {
+            res.status(404).json({
+                success: false,
+                error: 'Record not found'
+            });
+            return;
+        }
+        res.json({
+            success: true,
+            changes: result
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
+// 启动 Express 服务器
+app.listen(API_PORT, () => {
+    console.log(`API Server running on port ${API_PORT}`);
+});
+
+// 示例：如何使用数据库操作函数
+async function exampleDatabaseOperations() {
+    try {
+        // 查询示例
+        const data = await dbOperations.queryData({
+            dtuNo: '13912345678',
+            startTime: '2024-01-01',
+            endTime: '2024-12-31'
+        });
+        console.log('Query results:', JSON.stringify(data, null, 2));
+
+        // 删除示例
+        const deleteResult = await dbOperations.deleteData({ id: 1 });
+        console.log('Delete result:', deleteResult);
+
+        // 更新示例
+        const updateResult = await dbOperations.updateData(2, 'new data');
+        console.log('Update result:', updateResult);
+
+    } catch (error) {
+        console.error('Database operation error:', error);
+    }
+}
