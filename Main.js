@@ -338,7 +338,10 @@ process.on('SIGINT', () => {
 const app = express();
 const API_PORT = 3000;
 
-// 使用中间件
+app.use((req, res, next) => {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    next();
+});
 app.use(cors());
 app.use(bodyParser.json());
 
@@ -558,6 +561,50 @@ app.get('/api/online-dtus', (req, res) => {
         count: onlineList.length,
         devices: onlineList
     });
+});
+
+// 查询指定DTU号的最新状态（带格式化）
+app.get('/api/dtu-status/:dtuNo', async (req, res) => {
+    try {
+        const dtuNo = req.params.dtuNo;
+        // 查询该DTU号最新一条数据
+        const sql = `
+            SELECT * FROM RcvData
+            WHERE DtuNo = ?
+            ORDER BY RcvTime DESC
+            LIMIT 1
+        `;
+        db.get(sql, [dtuNo], (err, row) => {
+            if (err) {
+                res.status(500).json({ success: false, error: err.message });
+                return;
+            }
+            if (!row) {
+                res.status(404).json({ success: false, error: 'No data found for this DTU' });
+                return;
+            }
+            // 格式化数据
+            const format = v => (v == null ? null : Number(v));
+            const result = {
+                dtuNo: row.DtuNo,
+                rcvTime: row.RcvTime,
+                voltageAB: row.addr700 != null ? (row.addr700 / 10).toFixed(1) : null, // 1位小数
+                voltageBC: row.addr701 != null ? (row.addr701 / 10).toFixed(1) : null,
+                voltageCA: row.addr702 != null ? (row.addr702 / 10).toFixed(1) : null,
+                currentA: row.addr703 != null ? (row.addr703 / 100).toFixed(2) : null, // 2位小数
+                currentB: row.addr704 != null ? (row.addr704 / 100).toFixed(2) : null,
+                currentC: row.addr705 != null ? (row.addr705 / 100).toFixed(2) : null,
+                energy: (row.addr706 != null && row.addr707 != null)
+                    ? (((row.addr707 << 16) | row.addr706) / 100).toFixed(2)
+                    : null, // 2位小数
+                pressure: row.addr708 != null ? (row.addr708 / 1000).toFixed(3) : null, // 3位小数
+                relayStatus: row.addr710 == 1 ? 'ON' : (row.addr710 == 0 ? 'OFF' : null) // 1=闭合, 0=断开
+            };
+            res.json({ success: true, data: result });
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
 });
 
 // 启动 Express 服务器
