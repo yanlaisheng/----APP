@@ -478,6 +478,22 @@ app.post('/api/control/relay', async (req, res) => {
     }
 });
 
+// 获取当前在线DTU设备列表
+app.get('/api/online-dtus', (req, res) => {
+    // ddp.registeredDevices 是 Map，转为数组
+    const onlineList = Array.from(ddp.registeredDevices.entries()).map(([dtuNo, info]) => ({
+        dtuNo,
+        ipAddress: info.ipAddress,
+        port: info.port,
+        registerTime: info.registerTime
+    }));
+    res.json({
+        success: true,
+        count: onlineList.length,
+        devices: onlineList
+    });
+});
+
 // 启动 Express 服务器
 app.listen(API_PORT, () => {
     console.log(`API Server running on port ${API_PORT}`);
