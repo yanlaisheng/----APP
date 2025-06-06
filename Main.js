@@ -241,13 +241,53 @@ server.on('message', async (msg, rinfo) => {
                 const dataMsg = `Received Data: DTU=${result.dtuNumber}, Data=${result.data.toString('hex')}`;
                 console.log(dataMsg);
                 writeLog(dataMsg);
-                
+
+                // 解析700~710寄存器
+                let parsed = null;
                 try {
-                    await dbOperations.insertData(
+                    parsed = parse700to710Registers(result.data);
+                } catch (e) {
+                    parsed = null;
+                }
+
+                try {
+                    // 保存到数据库
+                    const sql = `
+                        INSERT INTO RcvData (
+                            DtuNo, RcvTime, Rcvdata,
+                            addr700, addr701, addr702, addr703, addr704, addr705,
+                            addr706, addr707, addr708, addr709, addr710
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    `;
+                    const now = new Date();
+                    // 转为北京时间
+                    now.setHours(now.getHours() + 8);
+                    const beijingTime = now.toISOString().replace('Z', '+08:00');
+                    // 保存到数据库
+                    const values = [
                         result.dtuNumber,
-                        result.data.toString('hex')
-                    );
-                    console.log('Data saved to database successfully');
+                        beijingTime, // 用北京时间
+                        result.data.toString('hex'),
+                        parsed ? parsed.addr700 : null,
+                        parsed ? parsed.addr701 : null,
+                        parsed ? parsed.addr702 : null,
+                        parsed ? parsed.addr703 : null,
+                        parsed ? parsed.addr704 : null,
+                        parsed ? parsed.addr705 : null,
+                        parsed ? parsed.addr706 : null,
+                        parsed ? parsed.addr707 : null,
+                        parsed ? parsed.addr708 : null,
+                        parsed ? parsed.addr709 : null,
+                        parsed ? parsed.addr710 : null
+                    ];
+                    db.run(sql, values, function(err) {
+                        if (err) {
+                            console.error('Failed to save data:', err);
+                            writeLog(`[ERROR] Failed to save data: ${err.message}`);
+                        } else {
+                            console.log('Data saved to database successfully');
+                        }
+                    });
                 } catch (dbError) {
                     console.error('Failed to save data:', dbError);
                     writeLog(`[ERROR] Failed to save data: ${dbError.message}`);
@@ -613,6 +653,57 @@ async function exampleDatabaseOperations() {
         console.error('Database operation error:', error);
     }
 }
+
+// 轮询间隔（单位：毫秒）
+const POLL_INTERVAL = 3 * 1000; // 3秒
+
+// 构建MODBUS读寄存器命令（功能码03，起始地址700，长度11）
+function buildRead700to710Command(deviceAddress = 0x02) {
+    const startAddr = 700; // 起始地址
+    const quantity = 11;   // 读取11个寄存器
+    const command = Buffer.from([
+        deviceAddress,
+        0x03, // 读保持寄存器
+        (startAddr >> 8) & 0xFF, startAddr & 0xFF,
+        (quantity >> 8) & 0xFF, quantity & 0xFF
+    ]);
+    const crc = calculateModbusCRC(command);
+    return Buffer.concat([command, crc]);
+}
+
+// 解析寄存器数据
+function parse700to710Registers(buffer) {
+    // buffer为MODBUS数据区（不含协议头），第4字节为字节数，后面每2字节一个寄存器
+    // 例：buffer = [0x02, 0x03, 0x16, ...22字节数据..., CRC]
+    if (buffer.length < 25) return null; // 2+1+22=25
+    const data = {};
+    for (let i = 0; i < 11; i++) {
+        // 数据从第3字节开始（buffer[3]），每2字节一个寄存器
+        const hi = buffer[3 + i * 2];
+        const lo = buffer[3 + i * 2 + 1];
+        data[`addr${700 + i}`] = (hi << 8) | lo;
+    }
+    return data;
+}
+
+// 定时轮询所有在线DTU
+setInterval(async () => {
+    for (const [dtuNo, info] of ddp.registeredDevices.entries()) {
+        try {
+            const modbusCmd = buildRead700to710Command();
+            await sendCommandToDTU(dtuNo, modbusCmd, {
+                address: info.ipAddress,
+                port: info.port
+            });
+            // 发送后，等待DTU上报数据（假设DTU收到后会主动上传数据包，已在UDP接收逻辑中处理）
+            // 如果需要主动等待响应，可扩展为Promise+事件回调
+        } catch (err) {
+            const logMsg = `轮询DTU ${dtuNo} 失败: ${err.message}`;
+            console.error(logMsg);
+            writeLog(logMsg);
+        }
+    }
+}, POLL_INTERVAL);
 
 // 每分钟检查一次，移除超过5分钟未活跃的DTU
 setInterval(() => {
