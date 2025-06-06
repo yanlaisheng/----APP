@@ -518,10 +518,27 @@ function buildModbusCommand(deviceAddress, value) {
     return Buffer.concat([command, crc]);
 }
 
-// 发送 MODBUS 命令到 DTU 设备
-function sendCommandToDTU(dtuNo, command, rinfo) {
+// 构建DDP协议包（服务器向DTU发送）
+function buildDDPServerDataPacket(dtuNo, modbusCommand) {
+    // DDP协议头部16字节
+    const buffer = Buffer.alloc(16);
+    buffer[0] = 0x7B; // 起始字节
+    buffer[1] = 0x89; // 包类型：服务器向DTU发送
+    buffer[2] = 0x00; // 包长度高字节
+    buffer[3] = 0x10; // 包长度低字节（固定16）
+    // 写入DTU号（ASCII，11字节，不足补0x00）
+    Buffer.from(dtuNo.padEnd(11, '\0')).copy(buffer, 4, 0, 11);
+    buffer[15] = 0x7B; // 结束字节
+
+    // 拼接实际数据（MODBUS命令）
+    return Buffer.concat([buffer, modbusCommand]);
+}
+
+// 发送 MODBUS 命令到 DTU 设备（自动封装DDP协议）
+function sendCommandToDTU(dtuNo, modbusCommand, rinfo) {
     return new Promise((resolve, reject) => {
-        server.send(command, rinfo.port, rinfo.address, (err) => {
+        const ddpPacket = buildDDPServerDataPacket(dtuNo, modbusCommand);
+        server.send(ddpPacket, rinfo.port, rinfo.address, (err) => {
             if (err) {
                 reject(err);
                 return;
