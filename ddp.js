@@ -17,13 +17,13 @@ class DDPProtocol extends EventEmitter {
     }
 
     // 解析接收到的数据
-    parsePacket(data) {
+    parsePacket(data, rinfo) {
         try {
             const buffer = Buffer.from(data);
-            
+
             // 获取包类型
             const packetType = buffer[1];
-            
+
             switch (packetType) {
                 case this.PACKET_TYPES.REGISTER: // 0x01 注册包
                     if (buffer.length !== 22) {
@@ -35,7 +35,7 @@ class DDPProtocol extends EventEmitter {
                     if (buffer[2] !== 0x00 || buffer[3] !== 0x16) {
                         throw new Error('注册包长度字段不正确');
                     }
-                    return this.handleRegister(buffer);
+                    return this.handleRegister(buffer, rinfo); // 传递 rinfo
 
                 case this.PACKET_TYPES.UNREGISTER: // 0x02 注销包
                     if (buffer.length !== 16) {
@@ -71,7 +71,7 @@ class DDPProtocol extends EventEmitter {
     }
 
     // 处理注册包
-    handleRegister(buffer) {
+    handleRegister(buffer, rinfo) {
         const dtuNumber = buffer.slice(4, 15).toString('ascii');
         const ipAddress = Array.from(buffer.slice(15, 19))
             .map(byte => byte.toString())
@@ -79,8 +79,8 @@ class DDPProtocol extends EventEmitter {
         const port = (buffer[19] << 8) | buffer[20];
 
         this.registeredDevices.set(dtuNumber, {
-            ipAddress,
-            port,
+            ipAddress: rinfo.address,
+            port: rinfo.port,
             registerTime: new Date()
         });
 
@@ -165,3 +165,9 @@ class DDPProtocol extends EventEmitter {
 }
 
 module.exports = new DDPProtocol();
+
+// 在 UDP 消息处理注册时
+// this.registeredDevices.set(result.dtuNumber, {
+//     ipAddress: rinfo.address,
+//     port: rinfo.port
+// });

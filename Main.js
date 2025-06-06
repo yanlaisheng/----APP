@@ -6,6 +6,7 @@ const sqlite3 = require('sqlite3').verbose();
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+const { address } = require('ref-napi');
 
 // 创建数据库连接
 const db = new sqlite3.Database('monitor.db', (err) => {
@@ -194,12 +195,13 @@ server.on('message', async (msg, rinfo) => {
     writeLog(receiveMessage);
 
     try {
-        const result = ddp.parsePacket(msg);
+        const result = ddp.parsePacket(msg, rinfo);
         
         switch (result.type) {
             case 'register':
                 // Handle registration
-                const registerMsg = `Device Registration: DTU=${result.dtuNumber}, IP=${result.ipAddress}, Port=${result.port}`;
+                // const registerMsg = `Device Registration: DTU=${result.dtuNumber}, IP=${result.ipAddress}, Port=${result.port}`;
+                const registerMsg = `Device Registration: DTU=${result.dtuNumber}, IP=${rinfo.address}, Port=${rinfo.port}`;
                 console.log(registerMsg);
                 writeLog(registerMsg);
                 
@@ -454,7 +456,7 @@ app.post('/api/control/relay', async (req, res) => {
         });
 
         // 记录操作
-        const logMessage = `Relay control command sent: DTU=${dtuNo}, Command=${command}`;
+        const logMessage = `Relay control command sent: DTU=${dtuNo}, IP=${deviceInfo.ipAddress}, Port=${deviceInfo.port}, Command=${command}`;
         console.log(logMessage);
         writeLog(logMessage);
 
