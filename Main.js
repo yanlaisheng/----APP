@@ -199,12 +199,23 @@ server.on('message', async (msg, rinfo) => {
         
         switch (result.type) {
             case 'register':
-                // Handle registration
-                // const registerMsg = `Device Registration: DTU=${result.dtuNumber}, IP=${result.ipAddress}, Port=${result.port}`;
-                const registerMsg = `Device Registration: DTU=${result.dtuNumber}, IP=${rinfo.address}, Port=${rinfo.port}`;
-                console.log(registerMsg);
-                writeLog(registerMsg);
-                
+                // 更新/注册设备信息，并记录最后活跃时间
+                if (ddp.registeredDevices.has(result.dtuNumber)) {
+                    const info = ddp.registeredDevices.get(result.dtuNumber);
+                    info.ipAddress = rinfo.address;
+                    info.port = rinfo.port;
+                    info.lastActiveTime = Date.now();
+                    ddp.registeredDevices.set(result.dtuNumber, info);
+                }
+                // 下面这句其实ddp.js里也有，但这里确保lastActiveTime一定有
+                else {
+                    ddp.registeredDevices.set(result.dtuNumber, {
+                        ipAddress: rinfo.address,
+                        port: rinfo.port,
+                        registerTime: new Date(),
+                        lastActiveTime: Date.now()
+                    });
+                }
                 // Send registration success response
                 server.send(result.response, rinfo.port, rinfo.address);
                 break;
@@ -220,6 +231,12 @@ server.on('message', async (msg, rinfo) => {
                 break;
 
             case 'data':
+                // 数据包也要更新lastActiveTime
+                if (ddp.registeredDevices.has(result.dtuNumber)) {
+                    const info = ddp.registeredDevices.get(result.dtuNumber);
+                    info.lastActiveTime = Date.now();
+                    ddp.registeredDevices.set(result.dtuNumber, info);
+                }
                 // Handle data and save to database
                 const dataMsg = `Received Data: DTU=${result.dtuNumber}, Data=${result.data.toString('hex')}`;
                 console.log(dataMsg);
@@ -480,12 +497,21 @@ app.post('/api/control/relay', async (req, res) => {
 
 // 获取当前在线DTU设备列表
 app.get('/api/online-dtus', (req, res) => {
-    // ddp.registeredDevices 是 Map，转为数组
+    function formatTime(t) {
+        if (!t) return '';
+        const date = new Date(t);
+        // 补0
+        const pad = n => n.toString().padStart(2, '0');
+        return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+             + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
     const onlineList = Array.from(ddp.registeredDevices.entries()).map(([dtuNo, info]) => ({
         dtuNo,
         ipAddress: info.ipAddress,
         port: info.port,
-        registerTime: info.registerTime
+        registerTime: info.registerTime ? formatTime(info.registerTime) : '',
+        lastActiveTime: info.lastActiveTime ? formatTime(info.lastActiveTime) : ''
     }));
     res.json({
         success: true,
@@ -587,3 +613,17 @@ async function exampleDatabaseOperations() {
         console.error('Database operation error:', error);
     }
 }
+
+// 每分钟检查一次，移除超过5分钟未活跃的DTU
+setInterval(() => {
+    const now = Date.now();
+    const TIMEOUT = 5 * 60 * 1000; // 5分钟
+    for (const [dtuNo, info] of ddp.registeredDevices.entries()) {
+        if (!info.lastActiveTime || now - info.lastActiveTime > TIMEOUT) {
+            ddp.registeredDevices.delete(dtuNo);
+            const logMsg = `DTU ${dtuNo} offline (timeout, removed from online list)`;
+            console.log(logMsg);
+            writeLog(logMsg);
+        }
+    }
+}, 60 * 1000); // 每分钟执行一次
