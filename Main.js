@@ -11,11 +11,8 @@ const { logWithTime } = require('./logger');
 
 const server = dgram.createSocket('udp4');
 
-// ���ÿ���̨����
-// process.stdout.setEncoding('utf8');
-// process.stderr.setEncoding('utf8');
 
-// �����˿ں�
+// 监听端口
 const PORT = 8888;
 // process.env.LANG = 'zh_CN.UTF-8';
 
@@ -27,25 +24,6 @@ const db = new sqlite3.Database('monitor.db', (err) => {
     }
     logWithTime('Connected to monitor.db database');
 });
-
-// 获取当前时间的字符串表示
-function getBeijingTimeStr() {
-    const now = new Date();
-    now.setHours(now.getHours() + 8);
-    return now.toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
-}
-
-// // 带时间戳的日志输出
-// function logWithTime(...args) {
-//     console.log(`[${getBeijingTimeStr()}]`, ...args);
-// }
-//     const date = new Date();
-//     // 设置为北京时间
-//     date.setHours(date.getHours() + 8);
-//     return date.toISOString().replace('Z', '+08:00');
-
-
-
 
 // 数据库操作函数   
 const dbOperations = {
@@ -624,7 +602,7 @@ app.get('/api/dtu-status/:dtuNo', async (req, res) => {
                     ? (((row.addr707 << 16) | row.addr706) / 100).toFixed(2)
                     : null, // 2位小数
                 pressure: row.addr708 != null ? (row.addr708 / 1000).toFixed(3) : null, // 3λС��
-                relayStatus: row.addr710 == 1 ? 'ON' : (row.addr710 == 0 ? 'OFF' : null) // 1=�պ�, 0=�Ͽ�
+                relayStatus: row.addr710 == 1 ? '闭合' : (row.addr710 == 0 ? '断开' : null) // 1=�պ�, 0=�Ͽ�
             };
             res.json({ success: true, data: result });
         });
