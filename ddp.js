@@ -1,4 +1,5 @@
 const EventEmitter = require('events');
+const { logWithTime } = require('./logger');
 
 class DDPProtocol extends EventEmitter {
     constructor() {
@@ -79,7 +80,7 @@ class DDPProtocol extends EventEmitter {
                         this.registeredDevices.set(ackDtuNumber, info);
                     }
                     // 只显示收到应答包
-                    console.log(`收到DTU[${ackDtuNumber}]的应答包`);
+                    logWithTime(`收到DTU[${ackDtuNumber}]的应答包`);
                     return {
                         type: 'ack',
                         dtuNumber: ackDtuNumber

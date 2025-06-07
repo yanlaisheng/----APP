@@ -7,34 +7,56 @@ const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const { address } = require('ref-napi');
+const { logWithTime } = require('./logger');
 
-// ´´½¨Êı¾İ¿âÁ¬½Ó
+const server = dgram.createSocket('udp4');
+
+// ï¿½ï¿½ï¿½Ã¿ï¿½ï¿½ï¿½Ì¨ï¿½ï¿½ï¿½ï¿½
+// process.stdout.setEncoding('utf8');
+// process.stderr.setEncoding('utf8');
+
+// ï¿½ï¿½ï¿½ï¿½ï¿½Ë¿Úºï¿½
+const PORT = 8888;
+// process.env.LANG = 'zh_CN.UTF-8';
+
+// åˆ›å»ºæ•°æ®åº“è¿æ¥
 const db = new sqlite3.Database('monitor.db', (err) => {
     if (err) {
         console.error('Database connection failed:', err.message);
         return;
     }
-    console.log('Connected to monitor.db database');
+    logWithTime('Connected to monitor.db database');
 });
 
-// ÔÚÎÄ¼ş¶¥²¿Ìí¼ÓÒ»¸ö¸ñÊ½»¯Ê±¼äµÄ¸¨Öúº¯Êı
-function getBeijingTime() {
-    const date = new Date();
-    // ÉèÖÃÎª±±¾©Ê±¼ä
-    date.setHours(date.getHours() + 8);
-    return date.toISOString().replace('Z', '+08:00');
+// è·å–å½“å‰æ—¶é—´çš„å­—ç¬¦ä¸²è¡¨ç¤º
+function getBeijingTimeStr() {
+    const now = new Date();
+    now.setHours(now.getHours() + 8);
+    return now.toISOString().replace('T', ' ').replace('Z', '').slice(0, 19);
 }
 
-// Êı¾İ¿â²Ù×÷º¯Êı
+// // å¸¦æ—¶é—´æˆ³çš„æ—¥å¿—è¾“å‡º
+// function logWithTime(...args) {
+//     console.log(`[${getBeijingTimeStr()}]`, ...args);
+// }
+//     const date = new Date();
+//     // è®¾ç½®ä¸ºåŒ—äº¬æ—¶é—´
+//     date.setHours(date.getHours() + 8);
+//     return date.toISOString().replace('Z', '+08:00');
+
+
+
+
+// æ•°æ®åº“æ“ä½œå‡½æ•°   
 const dbOperations = {
-    // ²åÈëÊı¾İ
+    // æ’å…¥æ•°æ®
     insertData: (dtuNo, data) => {
         return new Promise((resolve, reject) => {
             if (!dtuNo || !data) {
                 reject(new Error('DTU number and data are required'));
                 return;
             }
-            // Ê¹ÓÃ±±¾©Ê±¼ä
+            // ä½¿ç”¨å½“å‰æ—¶é—´
             const rcvTime = getBeijingTime();
             const sql = `INSERT INTO RcvData (DtuNo, RcvTime, Rcvdata) VALUES (?, ?, ?)`;
             db.run(sql, [dtuNo, rcvTime, data], function(err) {
@@ -47,13 +69,13 @@ const dbOperations = {
         });
     },
 
-    // ²éÑ¯Êı¾İ
+    // æŸ¥è¯¢æ•°æ®
     queryData: (conditions = {}) => {
         return new Promise((resolve, reject) => {
             let sql = 'SELECT * FROM RcvData';
             const params = [];
-            
-            // ¹¹½¨²éÑ¯Ìõ¼ş
+
+            // æ„å»ºæŸ¥è¯¢æ¡ä»¶
             if (Object.keys(conditions).length > 0) {
                 const whereClauses = [];
                 if (conditions.dtuNo) {
@@ -80,7 +102,7 @@ const dbOperations = {
                     reject(err);
                     return;
                 }
-                // ×ª»»²éÑ¯½á¹ûÖĞµÄÊ±¼ä
+                // è½¬æ¢æŸ¥è¯¢ç»“æœä¸­çš„æ—¶é—´æ ¼å¼
                 const formattedRows = rows.map(row => {
                     const date = new Date(row.RcvTime);
                     date.setHours(date.getHours() + 8);
@@ -94,7 +116,7 @@ const dbOperations = {
         });
     },
 
-    // É¾³ıÊı¾İ
+    // åˆ é™¤æ•°æ®
     deleteData: (conditions) => {
         return new Promise((resolve, reject) => {
             let sql = 'DELETE FROM RcvData';
@@ -118,7 +140,7 @@ const dbOperations = {
         });
     },
 
-    // ¸üĞÂÊı¾İ
+    // æ›´æ–°æ•°æ®
     updateData: (id, newData) => {
         return new Promise((resolve, reject) => {
             const sql = `UPDATE RcvData SET Rcvdata = ? WHERE id = ?`;
@@ -133,19 +155,19 @@ const dbOperations = {
     }
 };
 
-// ´´½¨ÈÕÖ¾Ä¿Â¼
+// åˆ›å»ºæ—¥å¿—ç›®å½•
 const logDir = path.join(__dirname, 'logs');
 if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir);
 }
 
-// ÈÕÖ¾¼ÇÂ¼º¯Êı
+// æ—¥å¿—è®°å½•å‡½æ•°
 function writeLog(message) {
     const now = new Date();
-    // ¸ñÊ½»¯ÈÕÆÚÎª YYYY-MM-DD
+    // æ ¼å¼åŒ–æ—¥æœŸä¸º YYYY-MM-DD
     const date = now.toISOString().split('T')[0];
 
-    // ¸ñÊ½»¯Ê±¼äÎª YYYY-MM-DD HH:mm:ss
+    // æ ¼å¼åŒ–æ—¶é—´ä¸º YYYY-MM-DD HH:mm:ss
     const timeStr = now.toLocaleString('zh-CN', {
         year: 'numeric',
         month: '2-digit',
@@ -158,40 +180,32 @@ function writeLog(message) {
 
     const logFile = path.join(logDir, `${date}.log`);
 
-    // Èç¹ûÎÄ¼ş²»´æÔÚ£¬´´½¨ÎÄ¼ş²¢Ğ´Èë UTF-8 BOM
+    // å¦‚æœæ—¥å¿—æ–‡ä»¶ä¸å­˜åœ¨ï¼Œåˆ™åˆ›å»ºæ–‡ä»¶å¹¶å†™å…¥ UTF-8 BOM
     if (!fs.existsSync(logFile)) {
         fs.writeFileSync(logFile, '\ufeff', { encoding: 'utf8' });
     }
-    // ½«ÈÕÖ¾ĞÅÏ¢Ğ´ÈëÎÄ¼ş
+    // å°†æ—¥å¿—ä¿¡æ¯å†™å…¥æ–‡ä»¶
     const logMessage = `[${timeStr}] ${message}\r\n`;
     fs.appendFileSync(logFile, logMessage, { encoding: 'utf8' });
 
 
 }
 
-const server = dgram.createSocket('udp4');
 
-// ÉèÖÃ¿ØÖÆÌ¨±àÂë
-process.stdout.setEncoding('utf8');
-process.stderr.setEncoding('utf8');
 
-// ¼àÌı¶Ë¿ÚºÅ
-const PORT = 8888;
-process.env.LANG = 'zh_CN.UTF-8';
-
-// µ±UDP·şÎñÆ÷Æô¶¯²¢¼àÌıÊ±´¥·¢
+// UDPæœåŠ¡å¯åŠ¨æ—¶
 server.on('listening', () => {
     const address = server.address();
     Buffer.from(JSON.stringify(address)).toString('utf8');
     const message = `UDP Service Listening ${address.address}:${address.port}`;
-    console.log(message);
+    logWithTime(message);
     writeLog(message);
 });
 
-// µ±½ÓÊÕµ½ÏûÏ¢Ê±´¥·¢
+// æ¥æ”¶åˆ°æ¶ˆæ¯æ—¶
 server.on('message', async (msg, rinfo) => {
     const receiveMessage = `Receive Message from ${rinfo.address}:${rinfo.port}`;
-    console.log(receiveMessage);
+    logWithTime(receiveMessage);
     writeLog(receiveMessage);
 
     try {
@@ -199,7 +213,7 @@ server.on('message', async (msg, rinfo) => {
         
         switch (result.type) {
             case 'register':
-                // ¸üĞÂ/×¢²áÉè±¸ĞÅÏ¢£¬²¢¼ÇÂ¼×îºó»îÔ¾Ê±¼ä
+                //æ›´æ–°/æ³¨å†Œè®¾å¤‡ä¿¡æ¯ï¼Œå¹¶è®°å½•æœ€åæ´»è·ƒæ—¶é—´
                 if (ddp.registeredDevices.has(result.dtuNumber)) {
                     const info = ddp.registeredDevices.get(result.dtuNumber);
                     info.ipAddress = rinfo.address;
@@ -207,7 +221,7 @@ server.on('message', async (msg, rinfo) => {
                     info.lastActiveTime = Date.now();
                     ddp.registeredDevices.set(result.dtuNumber, info);
                 }
-                // ÏÂÃæÕâ¾äÆäÊµddp.jsÀïÒ²ÓĞ£¬µ«ÕâÀïÈ·±£lastActiveTimeÒ»¶¨ÓĞ
+                // ç¡®ä¿ddp.jsä¸­ä¹Ÿèƒ½æ­£ç¡®è·å–lastActiveTime
                 else {
                     ddp.registeredDevices.set(result.dtuNumber, {
                         ipAddress: rinfo.address,
@@ -223,7 +237,7 @@ server.on('message', async (msg, rinfo) => {
             case 'unregister':
                 // Handle unregistration
                 const unregisterMsg = `Device Unregistration: DTU=${result.dtuNumber}`;
-                console.log(unregisterMsg);
+                logWithTime(unregisterMsg);
                 writeLog(unregisterMsg);
                 
                 // Send unregistration success response
@@ -231,7 +245,7 @@ server.on('message', async (msg, rinfo) => {
                 break;
 
             case 'data':
-                // Êı¾İ°üÒ²Òª¸üĞÂlastActiveTime
+                // æ•°æ®åŒ…ä¹Ÿè¦æ›´æ–°lastActiveTime
                 if (ddp.registeredDevices.has(result.dtuNumber)) {
                     const info = ddp.registeredDevices.get(result.dtuNumber);
                     info.lastActiveTime = Date.now();
@@ -239,10 +253,10 @@ server.on('message', async (msg, rinfo) => {
                 }
                 // Handle data and save to database
                 const dataMsg = `Received Data: DTU=${result.dtuNumber}, Data=${result.data.toString('hex')}`;
-                console.log(dataMsg);
+                logWithTime(dataMsg);
                 writeLog(dataMsg);
 
-                // ½âÎö700~710¼Ä´æÆ÷
+                // è§£æ700~710åœ°å€çš„å€¼
                 let parsed = null;
                 try {
                     parsed = parse700to710Registers(result.data);
@@ -251,7 +265,7 @@ server.on('message', async (msg, rinfo) => {
                 }
 
                 try {
-                    // ±£´æµ½Êı¾İ¿â
+                    // æ’å…¥æ•°æ®åˆ°æ•°æ®åº“
                     const sql = `
                         INSERT INTO RcvData (
                             DtuNo, RcvTime, Rcvdata,
@@ -260,13 +274,13 @@ server.on('message', async (msg, rinfo) => {
                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     `;
                     const now = new Date();
-                    // ×ªÎª±±¾©Ê±¼ä
+                    // è®¾ç½®ä¸ºåŒ—äº¬æ—¶é—´
                     now.setHours(now.getHours() + 8);
                     const beijingTime = now.toISOString().replace('Z', '+08:00');
-                    // ±£´æµ½Êı¾İ¿â
+                    // æ’å…¥æ•°æ®åˆ°æ•°æ®åº“
                     const values = [
                         result.dtuNumber,
-                        beijingTime, // ÓÃ±±¾©Ê±¼ä
+                        beijingTime, // åŒ—äº¬æ—¶é—´
                         result.data.toString('hex'),
                         parsed ? parsed.addr700 : null,
                         parsed ? parsed.addr701 : null,
@@ -285,7 +299,7 @@ server.on('message', async (msg, rinfo) => {
                             console.error('Failed to save data:', err);
                             writeLog(`[ERROR] Failed to save data: ${err.message}`);
                         } else {
-                            console.log('Data saved to database successfully');
+                            logWithTime('Data saved to database successfully');
                         }
                     });
                 } catch (dbError) {
@@ -294,21 +308,21 @@ server.on('message', async (msg, rinfo) => {
                 }
                 break;
 
-            case 'ack': // ĞÂÔöÓ¦´ğ°ü´¦Àí
-                // ¸üĞÂlastActiveTime
+            case 'ack': // æ–°å¢åº”ç­”åŒ…å¤„ç†
+                // æ›´æ–°lastActiveTime
                 if (ddp.registeredDevices.has(result.dtuNumber)) {
                     const info = ddp.registeredDevices.get(result.dtuNumber);
                     info.lastActiveTime = Date.now();
                     ddp.registeredDevices.set(result.dtuNumber, info);
                 }
-                const ackMsg = `ÊÕµ½DTU[${result.dtuNumber}]µÄÓ¦´ğ°ü`;
-                console.log(ackMsg);
+                const ackMsg = `æ”¶åˆ°DTU[${result.dtuNumber}]çš„åº”ç­”åŒ…`;
+                logWithTime(ackMsg);
                 writeLog(ackMsg);
                 break;
 
             default:
                 const unknownMsg = `Unknown Data Type: ${result.type}`;
-                console.log(unknownMsg);
+                logWithTime(unknownMsg);
                 writeLog(unknownMsg);
         }
     } catch (error) {
@@ -318,7 +332,7 @@ server.on('message', async (msg, rinfo) => {
     }
 });
 
-// ´íÎó´¦Àí
+// å¤„ç†é”™è¯¯
 server.on('error', (err) => {
     let errorMessage = '';
     if (err.message && err.message.includes('iconv')) {
@@ -332,21 +346,21 @@ server.on('error', (err) => {
 });
 
 
-// °ó¶¨¶Ë¿Ú²¢¿ªÊ¼¼àÌı
+// ç»‘å®šç«¯å£å¹¶å¼€å§‹ç›‘å¬
 server.bind(PORT);
 
-// ÔÚ³ÌĞòÍË³öÊ±¹Ø±ÕÊı¾İ¿âÁ¬½Ó
+// ç›‘å¬é€€å‡ºä¿¡å·ï¼Œå…³é—­æ•°æ®åº“è¿æ¥
 process.on('SIGINT', () => {
     db.close((err) => {
         if (err) {
             console.error('Error closing database:', err.message);
         }
-        console.log('Database connection closed');
+        logWithTime('Database connection closed');
         process.exit(0);
     });
 });
 
-// ´´½¨ExpressÓ¦ÓÃ
+// åˆ›å»ºExpressåº”ç”¨
 const app = express();
 const API_PORT = 3000;
 
@@ -357,8 +371,8 @@ app.use((req, res, next) => {
 app.use(cors());
 app.use(bodyParser.json());
 
-// APIÂ·ÓÉ
-// 1. ²éÑ¯Êı¾İ
+// APIè·¯ç”±
+// 1. æŸ¥è¯¢æ•°æ®
 app.get('/api/data', async (req, res) => {
     try {
         const conditions = {
@@ -379,7 +393,7 @@ app.get('/api/data', async (req, res) => {
     }
 });
 
-// 2. »ñÈ¡µ¥ÌõÊı¾İ
+// 2. è·å–å•æ¡è®°å½•
 app.get('/api/data/:id', async (req, res) => {
     try {
         const data = await dbOperations.queryData({ id: req.params.id });
@@ -402,12 +416,12 @@ app.get('/api/data/:id', async (req, res) => {
     }
 });
 
-// 3. ²åÈëÊı¾İ
+// 3. åˆ›å»ºæ•°æ®
 app.post('/api/data', async (req, res) => {
     try {
         const { dtuNo, data } = req.body;
-        
-        // ÑéÖ¤±ØÒª²ÎÊı
+
+        // éªŒè¯è¯·æ±‚å‚æ•°
         if (!dtuNo || !data) {
             res.status(400).json({
                 success: false,
@@ -416,8 +430,8 @@ app.post('/api/data', async (req, res) => {
             return;
         }
 
-        // ¼ÇÂ¼½ÓÊÕµ½µÄÊı¾İ
-        console.log('Received POST request:', {
+        // è®°å½•æ¥æ”¶åˆ°çš„è¯·æ±‚
+        logWithTime('Received POST request:', {
             dtuNo: dtuNo,
             data: data
         });
@@ -437,7 +451,7 @@ app.post('/api/data', async (req, res) => {
     }
 });
 
-// 4. ¸üĞÂÊı¾İ
+// 4. æ›´æ–°æ•°æ®
 app.put('/api/data/:id', async (req, res) => {
     try {
         const { data } = req.body;
@@ -461,7 +475,7 @@ app.put('/api/data/:id', async (req, res) => {
     }
 });
 
-// 5. É¾³ıÊı¾İ
+// 5. åˆ é™¤æ•°æ®
 app.delete('/api/data/:id', async (req, res) => {
     try {
         const result = await dbOperations.deleteData({ id: req.params.id });
@@ -484,12 +498,12 @@ app.delete('/api/data/:id', async (req, res) => {
     }
 });
 
-// Ìí¼Ó¼ÌµçÆ÷¿ØÖÆ API
+// æ·»åŠ ç»§ç”µå™¨æ§åˆ¶ API
 app.post('/api/control/relay', async (req, res) => {
     try {
         const { dtuNo, command } = req.body;
-        
-        // ÑéÖ¤±ØÒª²ÎÊı
+
+        // éªŒè¯è¯·æ±‚å‚æ•°
         if (!dtuNo || !command) {
             res.status(400).json({
                 success: false,
@@ -498,7 +512,7 @@ app.post('/api/control/relay', async (req, res) => {
             return;
         }
 
-        // ÑéÖ¤ÃüÁî
+        // éªŒè¯å‘½ä»¤
         if (command !== 'ON' && command !== 'OFF') {
             res.status(400).json({
                 success: false,
@@ -507,7 +521,7 @@ app.post('/api/control/relay', async (req, res) => {
             return;
         }
 
-        // »ñÈ¡Éè±¸ĞÅÏ¢£¨¼ÙÉèÒÑÔÚ ddp.js ÖĞÎ¬»¤ÁËÉè±¸Á¬½ÓĞÅÏ¢£©
+        // è·å–è®¾å¤‡ä¿¡æ¯ï¼ˆå‡è®¾å·²åœ¨ddp.jsä¸­ç»´æŠ¤äº†è®¾å¤‡ä¿¡æ¯ï¼‰
         const deviceInfo = ddp.registeredDevices.get(dtuNo);
         if (!deviceInfo) {
             res.status(404).json({
@@ -517,19 +531,19 @@ app.post('/api/control/relay', async (req, res) => {
             return;
         }
 
-        // ¹¹½¨ MODBUS ÃüÁî
+        // æ„å»º MODBUS å‘½ä»¤
         const value = command === 'ON' ? 0x0001 : 0x0000;
-        const modbusCommand = buildModbusCommand(0x02, value); // Éè±¸µØÖ·¹Ì¶¨Îª 0x02
+        const modbusCommand = buildModbusCommand(0x02, value); // è®¾å¤‡åœ°å€è®¾ä¸º 0x02
 
-        // ·¢ËÍÃüÁî
+        // å‘é€å‘½ä»¤
         await sendCommandToDTU(dtuNo, modbusCommand, {
             address: deviceInfo.ipAddress,
             port: deviceInfo.port
         });
 
-        // ¼ÇÂ¼²Ù×÷
+        // è®°å½•æ—¥å¿—
         const logMessage = `Relay control command sent: DTU=${dtuNo}, IP=${deviceInfo.ipAddress}, Port=${deviceInfo.port}, Command=${command}`;
-        console.log(logMessage);
+        logWithTime(logMessage);
         writeLog(logMessage);
 
         res.json({
@@ -550,12 +564,12 @@ app.post('/api/control/relay', async (req, res) => {
     }
 });
 
-// »ñÈ¡µ±Ç°ÔÚÏßDTUÉè±¸ÁĞ±í
+// è·å–å½“å‰åœ¨çº¿DTUè®¾å¤‡åˆ—è¡¨
 app.get('/api/online-dtus', (req, res) => {
     function formatTime(t) {
         if (!t) return '';
         const date = new Date(t);
-        // ²¹0
+        // è¡¥0
         const pad = n => n.toString().padStart(2, '0');
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
              + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
@@ -575,11 +589,11 @@ app.get('/api/online-dtus', (req, res) => {
     });
 });
 
-// ²éÑ¯Ö¸¶¨DTUºÅµÄ×îĞÂ×´Ì¬£¨´ø¸ñÊ½»¯£©
+// æŸ¥è¯¢æŒ‡å®šDTUçš„çŠ¶æ€
 app.get('/api/dtu-status/:dtuNo', async (req, res) => {
     try {
         const dtuNo = req.params.dtuNo;
-        // ²éÑ¯¸ÃDTUºÅ×îĞÂÒ»ÌõÊı¾İ
+        // æŸ¥è¯¢DTUçš„æœ€æ–°ä¸€æ¡è®°å½•
         const sql = `
             SELECT * FROM RcvData
             WHERE DtuNo = ?
@@ -595,22 +609,22 @@ app.get('/api/dtu-status/:dtuNo', async (req, res) => {
                 res.status(404).json({ success: false, error: 'No data found for this DTU' });
                 return;
             }
-            // ¸ñÊ½»¯Êı¾İ
+            // æ ¼å¼åŒ–æŸ¥è¯¢ç»“æœ
             const format = v => (v == null ? null : Number(v));
             const result = {
                 dtuNo: row.DtuNo,
                 rcvTime: row.RcvTime,
-                voltageAB: row.addr700 != null ? (row.addr700 / 10).toFixed(1) : null, // 1Î»Ğ¡Êı
+                voltageAB: row.addr700 != null ? (row.addr700 / 10).toFixed(1) : null, // 1Î»Ğ¡ï¿½ï¿½
                 voltageBC: row.addr701 != null ? (row.addr701 / 10).toFixed(1) : null,
                 voltageCA: row.addr702 != null ? (row.addr702 / 10).toFixed(1) : null,
-                currentA: row.addr703 != null ? (row.addr703 / 100).toFixed(2) : null, // 2Î»Ğ¡Êı
+                currentA: row.addr703 != null ? (row.addr703 / 100).toFixed(2) : null, // 2Î»Ğ¡ï¿½ï¿½
                 currentB: row.addr704 != null ? (row.addr704 / 100).toFixed(2) : null,
                 currentC: row.addr705 != null ? (row.addr705 / 100).toFixed(2) : null,
                 energy: (row.addr706 != null && row.addr707 != null)
                     ? (((row.addr707 << 16) | row.addr706) / 100).toFixed(2)
-                    : null, // 2Î»Ğ¡Êı
-                pressure: row.addr708 != null ? (row.addr708 / 1000).toFixed(3) : null, // 3Î»Ğ¡Êı
-                relayStatus: row.addr710 == 1 ? 'ON' : (row.addr710 == 0 ? 'OFF' : null) // 1=±ÕºÏ, 0=¶Ï¿ª
+                    : null, // 2ä½å°æ•°
+                pressure: row.addr708 != null ? (row.addr708 / 1000).toFixed(3) : null, // 3Î»Ğ¡ï¿½ï¿½
+                relayStatus: row.addr710 == 1 ? 'ON' : (row.addr710 == 0 ? 'OFF' : null) // 1=ï¿½Õºï¿½, 0=ï¿½Ï¿ï¿½
             };
             res.json({ success: true, data: result });
         });
@@ -619,12 +633,12 @@ app.get('/api/dtu-status/:dtuNo', async (req, res) => {
     }
 });
 
-// Æô¶¯ Express ·şÎñÆ÷
+// å¯åŠ¨ExpressæœåŠ¡å™¨
 app.listen(API_PORT, () => {
-    console.log(`API Server running on port ${API_PORT}`);
+    logWithTime(`API Server running on port ${API_PORT}`);
 });
 
-// Ìí¼Ó MODBUS CRC Ğ£Ñé¼ÆËãº¯Êı
+// è®¡ç®— MODBUS CRC æ ¡éªŒ
 function calculateModbusCRC(buffer) {
     let crc = 0xFFFF;
     for (let pos = 0; pos < buffer.length; pos++) {
@@ -638,44 +652,44 @@ function calculateModbusCRC(buffer) {
             }
         }
     }
-    // ·µ»ØÁ½¸ö×Ö½ÚµÄ CRC
+    // è¿”å›ä¸¤ä¸ªå­—èŠ‚çš„ CRC
     return Buffer.from([crc & 0xFF, (crc >> 8) & 0xFF]);
 }
 
-// ¹¹½¨ MODBUS Ğ´Ö¸Áî
+// æ„å»º MODBUS å‘½ä»¤
 function buildModbusCommand(deviceAddress, value) {
-    // ¹¹½¨»ù±¾ÃüÁî£¨²»º¬ CRC£©
+    // æ„å»ºå‘½ä»¤ï¼ˆä¸å« CRCï¼‰
     const command = Buffer.from([
-        deviceAddress,  // Éè±¸µØÖ·
-        0x06,          // ¹¦ÄÜÂë
-        0x02, 0xC5,    // Ğ´ÈëµØÖ·
-        (value >> 8) & 0xFF, value & 0xFF  // Ğ´ÈëÖµ£¨¸ß×Ö½ÚÔÚÇ°£©
+        deviceAddress,  // è®¾å¤‡åœ°å€
+        0x06,          // åŠŸèƒ½ç 
+        0x02, 0xC5,    // å¯„å­˜å™¨åœ°å€
+        (value >> 8) & 0xFF, value & 0xFF  // å¯„å­˜å™¨å€¼ï¼ˆé«˜å­—èŠ‚åœ¨å‰ï¼‰
     ]);
-    
-    // ¼ÆËã CRC
+
+    // è®¡ç®— CRC
     const crc = calculateModbusCRC(command);
-    
-    // ºÏ²¢ÃüÁîºÍ CRC
+
+    // æ‹¼æ¥å‘½ä»¤å’Œ CRC
     return Buffer.concat([command, crc]);
 }
 
-// ¹¹½¨DDPĞ­Òé°ü£¨·şÎñÆ÷ÏòDTU·¢ËÍ£©
+// æ„å»ºDDPåè®®æ•°æ®åŒ…
 function buildDDPServerDataPacket(dtuNo, modbusCommand) {
-    // DDPĞ­ÒéÍ·²¿16×Ö½Ú
+    // DDPåè®®å¤´éƒ¨16å­—èŠ‚
     const buffer = Buffer.alloc(16);
-    buffer[0] = 0x7B; // ÆğÊ¼×Ö½Ú
-    buffer[1] = 0x89; // °üÀàĞÍ£º·şÎñÆ÷ÏòDTU·¢ËÍ
-    buffer[2] = 0x00; // °ü³¤¶È¸ß×Ö½Ú
-    buffer[3] = 0x10; // °ü³¤¶ÈµÍ×Ö½Ú£¨¹Ì¶¨16£©
-    // Ğ´ÈëDTUºÅ£¨ASCII£¬11×Ö½Ú£¬²»×ã²¹0x00£©
+    buffer[0] = 0x7B; // èµ·å§‹å­—èŠ‚
+    buffer[1] = 0x89; // è®¾å¤‡ç±»å‹ï¼ˆDTUè®¾å¤‡ï¼‰
+    buffer[2] = 0x00; // è®¾å¤‡åºå·
+    buffer[3] = 0x10; // æ•°æ®é•¿åº¦ï¼ˆ16å­—èŠ‚ï¼‰
+    // å†™å…¥DTUç¼–å·ï¼ŒASCIIç 11å­—èŠ‚ï¼Œå¡«å……0x00
     Buffer.from(dtuNo.padEnd(11, '\0')).copy(buffer, 4, 0, 11);
-    buffer[15] = 0x7B; // ½áÊø×Ö½Ú
+    buffer[15] = 0x7B; // ç»“æŸå­—èŠ‚
 
-    // Æ´½ÓÊµ¼ÊÊı¾İ£¨MODBUSÃüÁî£©
+    // æ‹¼æ¥å®é™…æ•°æ®ï¼ŒMODBUSå‘½ä»¤
     return Buffer.concat([buffer, modbusCommand]);
 }
 
-// ·¢ËÍ MODBUS ÃüÁîµ½ DTU Éè±¸£¨×Ô¶¯·â×°DDPĞ­Òé£©
+// å°† MODBUS å‘½ä»¤å‘é€åˆ° DTU è®¾å¤‡å¹¶å°è£…æˆDDPåè®®
 function sendCommandToDTU(dtuNo, modbusCommand, rinfo) {
     return new Promise((resolve, reject) => {
         const ddpPacket = buildDDPServerDataPacket(dtuNo, modbusCommand);
@@ -689,40 +703,40 @@ function sendCommandToDTU(dtuNo, modbusCommand, rinfo) {
     });
 }
 
-// Ê¾Àı£ºÈçºÎÊ¹ÓÃÊı¾İ¿â²Ù×÷º¯Êı
+// ç¤ºä¾‹æ•°æ®åº“æ“ä½œ
 async function exampleDatabaseOperations() {
     try {
-        // ²éÑ¯Ê¾Àı
+        // æŸ¥è¯¢ç¤ºä¾‹
         const data = await dbOperations.queryData({
             dtuNo: '13912345678',
             startTime: '2024-01-01',
             endTime: '2024-12-31'
         });
-        console.log('Query results:', JSON.stringify(data, null, 2));
+        logWithTime('Query results:', JSON.stringify(data, null, 2));
 
-        // É¾³ıÊ¾Àı
+        // åˆ é™¤ç¤ºä¾‹
         const deleteResult = await dbOperations.deleteData({ id: 1 });
-        console.log('Delete result:', deleteResult);
+        logWithTime('Delete result:', deleteResult);
 
-        // ¸üĞÂÊ¾Àı
+        // æ›´æ–°ç¤ºä¾‹
         const updateResult = await dbOperations.updateData(2, 'new data');
-        console.log('Update result:', updateResult);
+        logWithTime('Update result:', updateResult);
 
     } catch (error) {
         console.error('Database operation error:', error);
     }
 }
 
-// ÂÖÑ¯¼ä¸ô£¨µ¥Î»£ººÁÃë£©
-const POLL_INTERVAL = 3 * 1000; // 3Ãë
+// å®šæ—¶æŸ¥è¯¢åœ¨çº¿DTUè®¾å¤‡
+const POLL_INTERVAL = 3 * 1000; // 3ç§’
 
-// ¹¹½¨MODBUS¶Á¼Ä´æÆ÷ÃüÁî£¨¹¦ÄÜÂë03£¬ÆğÊ¼µØÖ·700£¬³¤¶È11£©
+// æ„å»ºMODBUSè¯»å–å‘½ä»¤ï¼ˆä»åœ°å€700å¼€å§‹ï¼Œè¯»å–11ä¸ªå¯„å­˜å™¨ï¼‰
 function buildRead700to710Command(deviceAddress = 0x02) {
-    const startAddr = 700; // ÆğÊ¼µØÖ·
-    const quantity = 11;   // ¶ÁÈ¡11¸ö¼Ä´æÆ÷
+    const startAddr = 700; // èµ·å§‹åœ°å€
+    const quantity = 11;   // è·å–11ä¸ªå¯„å­˜å™¨
     const command = Buffer.from([
         deviceAddress,
-        0x03, // ¶Á±£³Ö¼Ä´æÆ÷
+        0x03, // åŠŸèƒ½ç 
         (startAddr >> 8) & 0xFF, startAddr & 0xFF,
         (quantity >> 8) & 0xFF, quantity & 0xFF
     ]);
@@ -730,14 +744,14 @@ function buildRead700to710Command(deviceAddress = 0x02) {
     return Buffer.concat([command, crc]);
 }
 
-// ½âÎö¼Ä´æÆ÷Êı¾İ
+// è§£æ700åˆ°710å¯„å­˜å™¨çš„å€¼
 function parse700to710Registers(buffer) {
-    // bufferÎªMODBUSÊı¾İÇø£¨²»º¬Ğ­ÒéÍ·£©£¬µÚ4×Ö½ÚÎª×Ö½ÚÊı£¬ºóÃæÃ¿2×Ö½ÚÒ»¸ö¼Ä´æÆ÷
-    // Àı£ºbuffer = [0x02, 0x03, 0x16, ...22×Ö½ÚÊı¾İ..., CRC]
+    // bufferä¸ºMODBUSå“åº”æŠ¥æ–‡ï¼Œå‰4ä¸ªå­—èŠ‚ä¸ºåœ°å€å’ŒåŠŸèƒ½ç ï¼Œå22ä¸ªå­—èŠ‚ä¸ºå¯„å­˜å™¨å€¼ï¼Œæ¯2ä¸ªå­—èŠ‚ä¸€ä¸ªå¯„å­˜å™¨
+    // ç¤ºä¾‹buffer = [0x02, 0x03, 0x16, ...22ä¸ªå­—èŠ‚..., CRC]
     if (buffer.length < 25) return null; // 2+1+22=25
     const data = {};
     for (let i = 0; i < 11; i++) {
-        // Êı¾İ´ÓµÚ3×Ö½Ú¿ªÊ¼£¨buffer[3]£©£¬Ã¿2×Ö½ÚÒ»¸ö¼Ä´æÆ÷
+        // æ•°æ®ä»3å­—èŠ‚å¼€å§‹ï¼Œbuffer[3]æ˜¯æ¯2å­—èŠ‚ä¸€ä¸ªå¯„å­˜å™¨
         const hi = buffer[3 + i * 2];
         const lo = buffer[3 + i * 2 + 1];
         data[`addr${700 + i}`] = (hi << 8) | lo;
@@ -745,7 +759,7 @@ function parse700to710Registers(buffer) {
     return data;
 }
 
-// ¶¨Ê±ÂÖÑ¯ËùÓĞÔÚÏßDTU
+// å®šæ—¶æŸ¥è¯¢åœ¨çº¿DTUè®¾å¤‡
 setInterval(async () => {
     for (const [dtuNo, info] of ddp.registeredDevices.entries()) {
         try {
@@ -754,26 +768,26 @@ setInterval(async () => {
                 address: info.ipAddress,
                 port: info.port
             });
-            // ·¢ËÍºó£¬µÈ´ıDTUÉÏ±¨Êı¾İ£¨¼ÙÉèDTUÊÕµ½ºó»áÖ÷¶¯ÉÏ´«Êı¾İ°ü£¬ÒÑÔÚUDP½ÓÊÕÂß¼­ÖĞ´¦Àí£©
-            // Èç¹ûĞèÒªÖ÷¶¯µÈ´ıÏìÓ¦£¬¿ÉÀ©Õ¹ÎªPromise+ÊÂ¼ş»Øµ÷
+            // ç­‰å¾…DTUè¿”å›æ•°æ®ï¼Œå¹¶å°†DTUå‘é€çš„å“åº”æ•°æ®è§£æåå†™å…¥æ•°æ®åº“
+            // éœ€è¦å°†å“åº”æ•°æ®æ‰©å±•ä¸ºPromise+äº‹ä»¶é©±åŠ¨
         } catch (err) {
-            const logMsg = `ÂÖÑ¯DTU ${dtuNo} Ê§°Ü: ${err.message}`;
+            const logMsg = `æŸ¥è¯¢DTU ${dtuNo} å¤±è´¥: ${err.message}`;
             console.error(logMsg);
             writeLog(logMsg);
         }
     }
 }, POLL_INTERVAL);
 
-// Ã¿·ÖÖÓ¼ì²éÒ»´Î£¬ÒÆ³ı³¬¹ı5·ÖÖÓÎ´»îÔ¾µÄDTU
+// æ¯5åˆ†é’Ÿæ£€æŸ¥ä¸€æ¬¡è¶…æ—¶æœªå“åº”çš„DTU
 setInterval(() => {
     const now = Date.now();
-    const TIMEOUT = 5 * 60 * 1000; // 5·ÖÖÓ
+    const TIMEOUT = 5 * 60 * 1000; // 5åˆ†é’Ÿ
     for (const [dtuNo, info] of ddp.registeredDevices.entries()) {
         if (!info.lastActiveTime || now - info.lastActiveTime > TIMEOUT) {
             ddp.registeredDevices.delete(dtuNo);
             const logMsg = `DTU ${dtuNo} offline (timeout, removed from online list)`;
-            console.log(logMsg);
+            logWithTime(logMsg);
             writeLog(logMsg);
         }
     }
-}, 60 * 1000); // Ã¿·ÖÖÓÖ´ĞĞÒ»´Î
+}, 60 * 1000); // æ¯åˆ†é’Ÿæ‰§è¡Œä¸€æ¬¡
