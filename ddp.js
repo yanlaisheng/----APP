@@ -9,7 +9,8 @@ class DDPProtocol extends EventEmitter {
             DATA: 0x09,
             REGISTER_SUCCESS: 0x81,
             UNREGISTER_SUCCESS: 0x82,
-            SERVER_DATA: 0x89
+            SERVER_DATA: 0x89,
+            ACK: 0x05 // 新增应答包类型
         };
         
         // 存储已注册的DTU设备信息
@@ -61,6 +62,28 @@ class DDPProtocol extends EventEmitter {
                         throw new Error('数据包超过最大长度1040字节');
                     }
                     return this.handleData(buffer);
+
+                case this.PACKET_TYPES.ACK: // 0x05 应答包
+                    if (buffer.length !== 16) {
+                        throw new Error('应答包长度必须为16字节');
+                    }
+                    if (buffer[0] !== 0x7B || buffer[15] !== 0x7B) {
+                        throw new Error('应答包首尾字节必须为0x7B');
+                    }
+                    // 解析DTU号
+                    const ackDtuNumber = buffer.slice(4, 15).toString('ascii');
+                    // 更新最后活跃时间
+                    if (this.registeredDevices.has(ackDtuNumber)) {
+                        const info = this.registeredDevices.get(ackDtuNumber);
+                        info.lastActiveTime = Date.now();
+                        this.registeredDevices.set(ackDtuNumber, info);
+                    }
+                    // 只显示收到应答包
+                    console.log(`收到DTU[${ackDtuNumber}]的应答包`);
+                    return {
+                        type: 'ack',
+                        dtuNumber: ackDtuNumber
+                    };
 
                 default:
                     throw new Error(`未知的包类型: 0x${packetType.toString(16)}`);
@@ -160,6 +183,19 @@ class DDPProtocol extends EventEmitter {
         buffer[15] = 0x7B; // 第16个字节
         dataBuffer.copy(buffer, 16); // 写入实际数据
 
+        return buffer;
+    }
+
+    // 构建DTU应答包
+    buildAckPacket(dtuNumber) {
+        const buffer = Buffer.alloc(16);
+        buffer[0] = 0x7B; // 起始字节
+        buffer[1] = this.PACKET_TYPES.ACK; // 包类型0x05
+        buffer[2] = 0x00; // 包长度高字节
+        buffer[3] = 0x10; // 包长度低字节
+        // 写入DTU号（ASCII，11字节，不足补0x00）
+        Buffer.from(dtuNumber.padEnd(11, '\0')).copy(buffer, 4, 0, 11);
+        buffer[15] = 0x7B; // 结束字节
         return buffer;
     }
 }
