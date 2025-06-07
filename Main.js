@@ -17,7 +17,8 @@ const PORT = 8888;
 // process.env.LANG = 'zh_CN.UTF-8';
 
 // 创建数据库连接
-const db = new sqlite3.Database('monitor.db', (err) => {
+const dbPath = path.join(__dirname, 'monitor.db');
+const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Database connection failed:', err.message);
         return;
