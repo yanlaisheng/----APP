@@ -294,6 +294,18 @@ server.on('message', async (msg, rinfo) => {
                 }
                 break;
 
+            case 'ack': // 新增应答包处理
+                // 更新lastActiveTime
+                if (ddp.registeredDevices.has(result.dtuNumber)) {
+                    const info = ddp.registeredDevices.get(result.dtuNumber);
+                    info.lastActiveTime = Date.now();
+                    ddp.registeredDevices.set(result.dtuNumber, info);
+                }
+                const ackMsg = `收到DTU[${result.dtuNumber}]的应答包`;
+                console.log(ackMsg);
+                writeLog(ackMsg);
+                break;
+
             default:
                 const unknownMsg = `Unknown Data Type: ${result.type}`;
                 console.log(unknownMsg);
