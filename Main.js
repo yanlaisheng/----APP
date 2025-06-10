@@ -819,3 +819,19 @@ function getDeviceNameByDtuNo(dtuNo) {
         });
     });
 }
+
+// 查询所有设备列表
+app.get('/api/devices', (req, res) => {
+    const sql = `SELECT DtuNo, DeviceName FROM DeviceDTU`;
+    db.all(sql, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ success: false, error: err.message });
+            return;
+        }
+        res.json({
+            success: true,
+            count: rows.length,
+            devices: rows
+        });
+    });
+});
