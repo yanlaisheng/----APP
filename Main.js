@@ -8,6 +8,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { address } = require('ref-napi');
 const { logWithTime } = require('./logger');
+const https = require('https');
 
 const server = dgram.createSocket('udp4');
 
@@ -636,9 +637,21 @@ app.get('/api/dtu-status/:dtuNo', async (req, res) => {
     }
 });
 
-// 启动Express服务器
-app.listen(API_PORT, () => {
-    logWithTime(`API Server running on port ${API_PORT}`);
+// // 启动Express服务器
+// app.listen(API_PORT, () => {
+//     logWithTime(`API Server running on port ${API_PORT}`);
+// });
+
+const sslKey = fs.readFileSync(path.join(__dirname, 'SSL', '202411111203382639_key.key'));
+const sslCert = fs.readFileSync(path.join(__dirname, 'SSL', 'star.sanli.cn_cert.pem'));
+
+const httpsServer = https.createServer({
+    key: sslKey,
+    cert: sslCert
+}, app);
+
+httpsServer.listen(API_PORT, () => {
+    logWithTime(`HTTPS API Server running on https://monitor.sanli.cn:${API_PORT}`);
 });
 
 // 计算 MODBUS CRC 校验
