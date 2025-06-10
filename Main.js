@@ -8,6 +8,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const { address } = require('ref-napi');
 const { logWithTime } = require('./logger');
+const https = require('https');
 
 const server = dgram.createSocket('udp4');
 
@@ -17,7 +18,8 @@ const PORT = 8888;
 // process.env.LANG = 'zh_CN.UTF-8';
 
 // 创建数据库连接
-const db = new sqlite3.Database('monitor.db', (err) => {
+const dbPath = path.join(__dirname, 'monitor.db');
+const db = new sqlite3.Database(dbPath, (err) => {
     if (err) {
         console.error('Database connection failed:', err.message);
         return;
@@ -191,23 +193,32 @@ server.on('message', async (msg, rinfo) => {
         
         switch (result.type) {
             case 'register':
-                //更新/注册设备信息，并记录最后活跃时间
+                // 查询设备名称
+                const deviceName = await getDeviceNameByDtuNo(result.dtuNumber);
+
+                // 更新/注册设备信息，并记录最后活跃时间和设备名称
                 if (ddp.registeredDevices.has(result.dtuNumber)) {
                     const info = ddp.registeredDevices.get(result.dtuNumber);
                     info.ipAddress = rinfo.address;
                     info.port = rinfo.port;
                     info.lastActiveTime = Date.now();
+                    info.deviceName = deviceName;
                     ddp.registeredDevices.set(result.dtuNumber, info);
-                }
-                // 确保ddp.js中也能正确获取lastActiveTime
-                else {
+                } else {
                     ddp.registeredDevices.set(result.dtuNumber, {
                         ipAddress: rinfo.address,
                         port: rinfo.port,
                         registerTime: new Date(),
-                        lastActiveTime: Date.now()
+                        lastActiveTime: Date.now(),
+                        deviceName: deviceName
                     });
                 }
+
+                // 控制台和日志输出带设备名称
+                const regMsg = `Device Registration: DTU=${result.dtuNumber}, Name=${deviceName}, IP=${rinfo.address}`;
+                logWithTime(regMsg);
+                writeLog(regMsg);
+
                 // Send registration success response
                 server.send(result.response, rinfo.port, rinfo.address);
                 break;
@@ -359,9 +370,23 @@ app.get('/api/data', async (req, res) => {
             endTime: req.query.endTime
         };
         const data = await dbOperations.queryData(conditions);
+
+        // 查询所有涉及到的DTU号的设备名称
+        const dtuNos = [...new Set(data.map(row => row.DtuNo))];
+        const deviceNames = {};
+        await Promise.all(dtuNos.map(async dtuNo => {
+            deviceNames[dtuNo] = await getDeviceNameByDtuNo(dtuNo);
+        }));
+
+        // 返回时加上DeviceName
+        const dataWithName = data.map(row => ({
+            ...row,
+            deviceName: deviceNames[row.DtuNo] || ''
+        }));
+
         res.json({
             success: true,
-            data: data
+            data: dataWithName
         });
     } catch (error) {
         res.status(500).json({
@@ -371,7 +396,6 @@ app.get('/api/data', async (req, res) => {
     }
 });
 
-// 2. 获取单条记录
 app.get('/api/data/:id', async (req, res) => {
     try {
         const data = await dbOperations.queryData({ id: req.params.id });
@@ -382,9 +406,11 @@ app.get('/api/data/:id', async (req, res) => {
             });
             return;
         }
+        // 查询DeviceName
+        const deviceName = await getDeviceNameByDtuNo(data[0].DtuNo);
         res.json({
             success: true,
-            data: data[0]
+            data: { ...data[0], deviceName }
         });
     } catch (error) {
         res.status(500).json({
@@ -547,7 +573,6 @@ app.get('/api/online-dtus', (req, res) => {
     function formatTime(t) {
         if (!t) return '';
         const date = new Date(t);
-        // 补0
         const pad = n => n.toString().padStart(2, '0');
         return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
              + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
@@ -555,6 +580,7 @@ app.get('/api/online-dtus', (req, res) => {
 
     const onlineList = Array.from(ddp.registeredDevices.entries()).map(([dtuNo, info]) => ({
         dtuNo,
+        deviceName: info.deviceName || '',
         ipAddress: info.ipAddress,
         port: info.port,
         registerTime: info.registerTime ? formatTime(info.registerTime) : '',
@@ -571,6 +597,7 @@ app.get('/api/online-dtus', (req, res) => {
 app.get('/api/dtu-status/:dtuNo', async (req, res) => {
     try {
         const dtuNo = req.params.dtuNo;
+        const deviceName = await getDeviceNameByDtuNo(dtuNo);
         // 查询DTU的最新一条记录
         const sql = `
             SELECT * FROM RcvData
@@ -587,22 +614,21 @@ app.get('/api/dtu-status/:dtuNo', async (req, res) => {
                 res.status(404).json({ success: false, error: 'No data found for this DTU' });
                 return;
             }
-            // 格式化查询结果
-            const format = v => (v == null ? null : Number(v));
             const result = {
                 dtuNo: row.DtuNo,
+                deviceName,
                 rcvTime: row.RcvTime,
-                voltageAB: row.addr700 != null ? (row.addr700 / 10).toFixed(1) : null, // 1λС��
+                voltageAB: row.addr700 != null ? (row.addr700 / 10).toFixed(1) : null,
                 voltageBC: row.addr701 != null ? (row.addr701 / 10).toFixed(1) : null,
                 voltageCA: row.addr702 != null ? (row.addr702 / 10).toFixed(1) : null,
-                currentA: row.addr703 != null ? (row.addr703 / 100).toFixed(2) : null, // 2λС��
+                currentA: row.addr703 != null ? (row.addr703 / 100).toFixed(2) : null,
                 currentB: row.addr704 != null ? (row.addr704 / 100).toFixed(2) : null,
                 currentC: row.addr705 != null ? (row.addr705 / 100).toFixed(2) : null,
                 energy: (row.addr706 != null && row.addr707 != null)
                     ? (((row.addr707 << 16) | row.addr706) / 100).toFixed(2)
-                    : null, // 2位小数
-                pressure: row.addr708 != null ? (row.addr708 / 1000).toFixed(3) : null, // 3λС��
-                relayStatus: row.addr710 == 1 ? '闭合' : (row.addr710 == 0 ? '断开' : null) // 1=�պ�, 0=�Ͽ�
+                    : null,
+                pressure: row.addr708 != null ? (row.addr708 / 1000).toFixed(3) : null,
+                relayStatus: row.addr710 == 1 ? '闭合' : (row.addr710 == 0 ? '断开' : null)
             };
             res.json({ success: true, data: result });
         });
@@ -611,9 +637,21 @@ app.get('/api/dtu-status/:dtuNo', async (req, res) => {
     }
 });
 
-// 启动Express服务器
-app.listen(API_PORT, () => {
-    logWithTime(`API Server running on port ${API_PORT}`);
+// // 启动Express服务器
+// app.listen(API_PORT, () => {
+//     logWithTime(`API Server running on port ${API_PORT}`);
+// });
+
+const sslKey = fs.readFileSync(path.join(__dirname, 'SSL', '202411111203382639_key.key'));
+const sslCert = fs.readFileSync(path.join(__dirname, 'SSL', 'star.sanli.cn_cert.pem'));
+
+const httpsServer = https.createServer({
+    key: sslKey,
+    cert: sslCert
+}, app);
+
+httpsServer.listen(API_PORT, () => {
+    logWithTime(`HTTPS API Server running on https://monitor.sanli.cn:${API_PORT}`);
 });
 
 // 计算 MODBUS CRC 校验
@@ -769,3 +807,31 @@ setInterval(() => {
         }
     }
 }, 60 * 1000); // 每分钟执行一次
+
+function getDeviceNameByDtuNo(dtuNo) {
+    return new Promise((resolve, reject) => {
+        db.get('SELECT DeviceName FROM DeviceDTU WHERE DtuNo = ?', [dtuNo], (err, row) => {
+            if (err) {
+                resolve(''); // 查询失败时返回空字符串
+            } else {
+                resolve(row ? row.DeviceName : '');
+            }
+        });
+    });
+}
+
+// 查询所有设备列表
+app.get('/api/devices', (req, res) => {
+    const sql = `SELECT DtuNo, DeviceName FROM DeviceDTU`;
+    db.all(sql, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ success: false, error: err.message });
+            return;
+        }
+        res.json({
+            success: true,
+            count: rows.length,
+            devices: rows
+        });
+    });
+});
