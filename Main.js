@@ -9,6 +9,7 @@ const bodyParser = require('body-parser');
 const { address } = require('ref-napi');
 const { logWithTime } = require('./logger');
 const https = require('https');
+const bcrypt = require('bcryptjs');
 
 const server = dgram.createSocket('udp4');
 
@@ -833,5 +834,172 @@ app.get('/api/devices', (req, res) => {
             count: rows.length,
             devices: rows
         });
+    });
+});
+
+// 新增用户
+app.post('/api/users', async (req, res) => {
+    const { username, passwrd, accessRight, isDelete, isAccessDenied } = req.body;
+    if (!username || !passwrd) {
+        return res.status(400).json({ success: false, error: '用户名和密码必填' });
+    }
+    // 加密密码
+    const hash = await bcrypt.hash(passwrd, 10);
+    const sql = `INSERT INTO usr (username, passwrd, accessRight, isDelete, isAccessDenied) VALUES (?, ?, ?, ?, ?)`;
+    db.run(sql, [
+        username,
+        hash,
+        accessRight || 0,
+        isDelete || 0,
+        isAccessDenied || 0
+    ], function(err) {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        res.json({ success: true, id: this.lastID });
+    });
+});
+
+// 查询所有用户（不返回已删除用户）
+app.get('/api/users', (req, res) => {
+    db.all(`SELECT id, username, accessRight, isDelete, isAccessDenied FROM usr WHERE isDelete = 0`, [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        res.json({ success: true, users: rows });
+    });
+});
+
+// 查询单个用户
+app.get('/api/users/:id', (req, res) => {
+    db.get(
+        `SELECT id, username, accessRight, isDelete, isAccessDenied FROM usr WHERE id = ?`,
+        [req.params.id],
+        (err, row) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: err.message });
+            }
+            if (!row) {
+                return res.status(404).json({ success: false, error: '用户不存在' });
+            }
+            res.json({ success: true, user: row });
+        }
+    );
+});
+
+// 查询单个用户（通过用户名）
+app.get('/api/users/by-username/:username', (req, res) => {
+    db.get(
+        `SELECT id, username, accessRight, isDelete, isAccessDenied FROM usr WHERE username = ?`,
+        [req.params.username],
+        (err, row) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: err.message });
+            }
+            if (!row) {
+                return res.status(404).json({ success: false, error: '用户不存在' });
+            }
+            res.json({ success: true, user: row });
+        }
+    );
+});
+
+// 修改用户（如需改密码也要加密）
+app.put('/api/users/:id', async (req, res) => {
+    const { username, passwrd, accessRight, isDelete, isAccessDenied } = req.body;
+    let sql, params;
+    if (passwrd) {
+        const hash = await bcrypt.hash(passwrd, 10);
+        sql = `UPDATE usr SET username = ?, passwrd = ?, accessRight = ?, isDelete = ?, isAccessDenied = ? WHERE id = ?`;
+        params = [username, hash, accessRight, isDelete, isAccessDenied, req.params.id];
+    } else {
+        sql = `UPDATE usr SET username = ?, accessRight = ?, isDelete = ?, isAccessDenied = ? WHERE id = ?`;
+        params = [username, accessRight, isDelete, isAccessDenied, req.params.id];
+    }
+    db.run(sql, params, function(err) {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ success: false, error: '用户不存在' });
+        }
+        res.json({ success: true });
+    });
+});
+
+// 修改用户（通过用户名）
+app.put('/api/users/by-username/:username', async (req, res) => {
+    const { username, passwrd, accessRight, isDelete, isAccessDenied } = req.body;
+    let sql, params;
+    if (passwrd) {
+        const hash = await bcrypt.hash(passwrd, 10);
+        sql = `UPDATE usr SET username = ?, passwrd = ?, accessRight = ?, isDelete = ?, isAccessDenied = ? WHERE username = ?`;
+        params = [username, hash, accessRight, isDelete, isAccessDenied, req.params.username];
+    } else {
+        sql = `UPDATE usr SET username = ?, accessRight = ?, isDelete = ?, isAccessDenied = ? WHERE username = ?`;
+        params = [username, accessRight, isDelete, isAccessDenied, req.params.username];
+    }
+    db.run(sql, params, function(err) {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ success: false, error: '用户不存在' });
+        }
+        res.json({ success: true });
+    });
+});
+
+// 删除用户（逻辑删除，设置isDelete=1）
+app.delete('/api/users/:id', (req, res) => {
+    db.run(`UPDATE usr SET isDelete = 1 WHERE id = ?`, [req.params.id], function(err) {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        if (this.changes === 0) {
+            return res.status(404).json({ success: false, error: '用户不存在' });
+        }
+        res.json({ success: true });
+    });
+});
+
+// 删除用户（通过用户名，逻辑删除，设置isDelete=1）
+app.delete('/api/users/by-username/:username', (req, res) => {
+    db.run(
+        `UPDATE usr SET isDelete = 1 WHERE username = ?`,
+        [req.params.username],
+        function(err) {
+            if (err) {
+                return res.status(500).json({ success: false, error: err.message });
+            }
+            if (this.changes === 0) {
+                return res.status(404).json({ success: false, error: '用户不存在' });
+            }
+            res.json({ success: true });
+        }
+    );
+});
+
+// 用户登录校验（需判断isDelete和isAccessDenied）
+app.post('/api/users/login', (req, res) => {
+    const { username, passwrd } = req.body;
+    db.get(`SELECT id, username, passwrd, accessRight, isDelete, isAccessDenied FROM usr WHERE username = ?`, [username], async (err, row) => {
+        if (err) {
+            return res.status(500).json({ success: false, error: err.message });
+        }
+        if (!row || row.isDelete) {
+            return res.status(401).json({ success: false, error: '用户名或密码错误' });
+        }
+        if (row.isAccessDenied) {
+            return res.status(403).json({ success: false, error: '用户已被禁用' });
+        }
+        // 校验密码
+        const match = await bcrypt.compare(passwrd, row.passwrd);
+        if (!match) {
+            return res.status(401).json({ success: false, error: '用户名或密码错误' });
+        }
+        // 不返回密码字段
+        const { passwrd: _, ...userInfo } = row;
+        res.json({ success: true, user: userInfo });
     });
 });
